@@ -931,3 +931,4 @@
 > 20201014 released 20201014.0
 * 20201016 Document and improve automated testing to make it easier for
            new users to run in new environments
+* 20201018 Change script interpreter line to use /usr/bin/env for portability
