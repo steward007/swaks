@@ -10,13 +10,13 @@
 #  - TEST_SWAKS=../../swaks bin/run-tests.pl --errors --infile var/results.1570707905 _options-data
 
 use strict;
+use File::Copy qw();
 use File::Spec::Functions qw(:ALL);
 use Getopt::Long;
 use Sys::Hostname;
 use Term::ReadKey;
 use Text::ParseWords;
-
-$G::debug = { 'ALL' => 1 };
+use Text::Diff qw();
 
 # --headless - don't prompt the user, just run and display the results
 # --outfile - save the results in a way that can be read by infile
@@ -45,7 +45,7 @@ my $tokens = {
 if ($ENV{TEST_SWAKS}) {
 	$tokens->{'global'}{'%SWAKS%'} = $ENV{TEST_SWAKS};
 }
-$tokens->{'global'}{'%SWAKS%'} = 'C:\Users\Administrator\git\swaks\swaks';
+#$tokens->{'global'}{'%SWAKS%'} = 'C:\Users\Administrator\git\swaks\swaks';
 
 
 if (!-d $testDir) {
@@ -188,16 +188,10 @@ sub runResult {
 		if ($verb eq 'COMPARE_FILE') {
 			debug('COMPARE_FILE', join('; ', @args));
 			if (-f $args[0] && -f $args[1]) {
-				# my($diffFile) = $args[0] =~ m|([^/]+)$|;
-# 				$diffFile     = $tokens->{'%OUTDIR%'} . '/' . $diffFile . '.diff';
 				my $diffFile     = catfile($tokens->{'%OUTDIR%'}, (splitpath($args[0]))[2] . '.diff');
 				unlink($diffFile);
 
-				debug('exec', "diff -u $args[0] $args[1]");
-				open(P, "diff -u $args[0] $args[1] |") || die "Can't run diff: $!\n";
-				my $diff = join('', <P>);
-				close(P);
-
+				my $diff = Text::Diff::diff($args[0], $args[1], { STYLE => 'Unified' });
 				if ($diff) {
 					# my $diffFile = $tokens->{'%OUTDIR%'} . '/' . $tokens->{'%TESTID%'} . '.diff';
 					open(O, ">$diffFile") || die "Can't write to $diffFile: $!\n";
@@ -259,8 +253,7 @@ sub runResult {
 								last FILE;
 							}
 							elsif ($input eq 'a') {
-								debug('exec', "/bin/cp $args[1] $args[0]");
-								system("/bin/cp", $args[1], $args[0]);
+								File::Copy::copy($args[1], $args[0]);
 								redo TEST_EXECUTION;
 							}
 							elsif ($input eq 'q') {
@@ -512,7 +505,7 @@ sub readTestFile {
 					# out that seeing errors first is much more useful, but I don't want to modify all the existing tests
 					my @filesSorted = grep(/\.stderr/, @files);
 					push(@filesSorted, grep(/\.stdout/, @files), grep(!/\.(stdout|stderr)/, @files));
-					map { push(@{$obj->{'test result'}}, "COMPARE_FILE " . catfile('%OUTDIR%', $_) .' ' . catfile('%OUTDIR%', $_)); } (@filesSorted);
+					map { push(@{$obj->{'test result'}}, "COMPARE_FILE " . catfile('%REFDIR%', $_) .' ' . catfile('%OUTDIR%', $_)); } (@filesSorted);
 				}
 				elsif ($type eq 'INTERACT') {
 					my $file     = catfile('%OUTDIR%', '%TESTID%.expect');
@@ -618,7 +611,7 @@ sub debug {
 sub mshellwords {
 	my $line = shift;
 	my @return = ();
-	
+
 	if ($^O eq 'MSWin32') {
 		$line =~ s/\\/::BACKSLASH::/g;
 		foreach my $part (shellwords($line)) {
