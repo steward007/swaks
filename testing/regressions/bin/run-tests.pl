@@ -10,10 +10,13 @@
 #  - TEST_SWAKS=../../swaks bin/run-tests.pl --errors --infile var/results.1570707905 _options-data
 
 use strict;
+use File::Spec::Functions qw(:ALL);
 use Getopt::Long;
 use Sys::Hostname;
 use Term::ReadKey;
 use Text::ParseWords;
+
+$G::debug = { 'ALL' => 1 };
 
 # --headless - don't prompt the user, just run and display the results
 # --outfile - save the results in a way that can be read by infile
@@ -24,10 +27,10 @@ my $opts = {};
 GetOptions($opts, 'headless|h!', 'outfile|o=s', 'infile|i=s', 'errors|e!', 'skip-only') || die "Couldn't understand options\n";
 
 my $testDir =  shift || die "Please provide the path to the test directory\n";
-$testDir    =~ s|/+$||;
+$testDir    =~ canonpath($testDir); # remove trailing slashes
 my $testRe  =  shift || '.'; # pattern to match test IDs against. Allows to run subset of tests by specifying, eg, '005.'
-my $outDir  =  "$testDir/out-dyn";
-my $refDir  =  "$testDir/out-ref";
+my $outDir  =  catfile($testDir, "out-dyn");
+my $refDir  =  catfile($testDir, "out-ref");
 
 my $tokens = {
 	'global' => {
@@ -42,10 +45,16 @@ my $tokens = {
 if ($ENV{TEST_SWAKS}) {
 	$tokens->{'global'}{'%SWAKS%'} = $ENV{TEST_SWAKS};
 }
+$tokens->{'global'}{'%SWAKS%'} = 'C:\Users\Administrator\git\swaks\swaks';
 
+
+if (!-d $testDir) {
+	die "invalid test suite (not a directory): $testDir\n";
+}
 if (!-d $outDir) {
 	mkdir($outDir) || die "Can't mkdir($outDir): $!\n";
-	open(O, ">$outDir/.gitignore") || die "Can't open $outDir/.gitignore for writing: $!\n";
+	my $gitignore = catfile($outDir, ".gitignore");
+	open(O, ">$gitignore") || die "Can't open $gitignore for writing: $!\n";
 	print O "*\n";
 	close(O);
 }
@@ -75,7 +84,7 @@ TEST_EXECUTION:
 foreach my $testFile (sort @testDefs) {
 	restoreEnv();
 
-	my $testObj = readTestFile("$testDir/$testFile");
+	my $testObj = readTestFile(catfile($testDir, $testFile));
 	next if ($testObj->{id} !~ /$testRe/);
 
 	my $result = runTest($testDir, $outDir, $testObj);
@@ -174,13 +183,14 @@ sub runResult {
 	foreach my $test (@$tests) {
 		debug('result', $test);
 
-		my($verb, @args) = shellwords(replaceTokens($tokens, $test));
+		my($verb, @args) = mshellwords(replaceTokens($tokens, $test));
 
 		if ($verb eq 'COMPARE_FILE') {
 			debug('COMPARE_FILE', join('; ', @args));
 			if (-f $args[0] && -f $args[1]) {
-				my($diffFile) = $args[0] =~ m|([^/]+)$|;
-				$diffFile     = $tokens->{'%OUTDIR%'} . '/' . $diffFile . '.diff';
+				# my($diffFile) = $args[0] =~ m|([^/]+)$|;
+# 				$diffFile     = $tokens->{'%OUTDIR%'} . '/' . $diffFile . '.diff';
+				my $diffFile     = catfile($tokens->{'%OUTDIR%'}, (splitpath($args[0]))[2] . '.diff');
 				unlink($diffFile);
 
 				debug('exec', "diff -u $args[0] $args[1]");
@@ -197,7 +207,7 @@ sub runResult {
 					if (!$opts->{'headless'}) {
 						INTERACT:
 						while (1) {
-							print "Test $tokens->{'%TESTDIR%'}/$tokens->{'%TESTID%'} is about to fail.\n",
+							print "Test ", catfile($tokens->{'%TESTDIR%'}, $tokens->{'%TESTID%'}), " is about to fail.\n",
 							      "DIFF:   $args[0], $args[1]\n",
 							      ($testObj->{title} ? "TITLE:  $testObj->{title}\n" : ''),
 							      "ACTION: ", $testObj->{'test action'}[0], "\n",
@@ -235,8 +245,9 @@ sub runResult {
 							}
 							elsif ($input eq 'e') {
 								my $editor = $ENV{'SWAKS_EDITOR'} || $ENV{'VISUAL'} || $ENV{'EDITOR'};
-								debug('exec', "$editor $tokens->{'%TESTDIR%'}/$tokens->{'%TESTID%'}.test");
-								system($editor, "$tokens->{'%TESTDIR%'}/$tokens->{'%TESTID%'}.test");
+								my $file   = catfile($tokens->{'%TESTDIR%'}, "$tokens->{'%TESTID%'}.test");
+								debug('exec', "$editor $file");
+								system($editor, $file);
 								redo TEST_EXECUTION;
 							}
 							elsif ($input eq 'r') {
@@ -293,7 +304,7 @@ sub runAction {
 
 	debug('action', $action);
 
-	my($verb, @args) = shellwords(replaceTokens($tokens, $action));
+	my($verb, @args) = mshellwords(replaceTokens($tokens, $action));
 
 	if ($verb eq 'REMOVE_FILE') {
 		debug('REMOVE_FILE', join('; ', @args));
@@ -307,8 +318,8 @@ sub runAction {
 	elsif ($verb =~ /^CMD_CAPTURE(?::(\S+))?$/) {
 		debug('CMD_CAPTURE', join('; ', @args));
 		my $suffix     = $1 ? ".$1" : '';
-		my $stdoutFile = $tokens->{'%OUTDIR%'} . '/' . $tokens->{'%TESTID%'} . '.stdout' . $suffix;
-		my $stderrFile = $tokens->{'%OUTDIR%'} . '/' . $tokens->{'%TESTID%'} . '.stderr' . $suffix;
+		my $stdoutFile = catfile($tokens->{'%OUTDIR%'}, $tokens->{'%TESTID%'} . '.stdout' . $suffix);
+		my $stderrFile = catfile($tokens->{'%OUTDIR%'}, $tokens->{'%TESTID%'} . '.stderr' . $suffix);
 		my $stdinFile  = (grep(/^STDIN:/, @args))[0];
 		@args          = grep(!/^STDIN:/, @args);
 
@@ -423,7 +434,8 @@ sub replaceTokens {
 	my $action = shift;
 
 	foreach my $token (keys %$tokens) {
-		$action =~ s/$token/$tokens->{$token}/g
+		$action =~ s/$token/$tokens->{$token}/g;
+		debug('token', "REPLACE $token -> $tokens->{$token}, $action\n");
 	}
 
 	return($action);
@@ -471,7 +483,8 @@ sub readTestFile {
 
 		$fullLine = '';
 	}
-	if ($file =~ m%([^/]+)\.[^/]+$%) {
+	my $idFile = (splitpath($file))[2];
+	if ($idFile =~ m%^(.+)\.[^.]+$%) {
 		$obj->{id} = $1;
 	}
 	else {
@@ -483,26 +496,26 @@ sub readTestFile {
 	if (exists($obj->{'auto'}) && ref($obj->{'auto'}) eq 'ARRAY') {
 		foreach my $auto (@{$obj->{'auto'}}) {
 			# my($types, @files) = split(' ', $auto);
-			my($types, @files) = shellwords($auto);
+			my($types, @files) = mshellwords($auto);
 			foreach my $type (split(/,/, $types)) {
 				if ($type eq 'REMOVE_FILE') {
-					map { push(@{$obj->{'pre action'}}, "REMOVE_FILE %OUTDIR%/$_"); } (@files);
+					map { push(@{$obj->{'pre action'}}, "REMOVE_FILE " . catfile('%OUTDIR%', $_)); } (@files);
 				}
 				elsif ($type eq 'CREATE_FILE') {
 					map { push(@{$obj->{'pre action'}}, "CREATE_FILE %REFDIR%/$_"); } (@files);
 				}
 				elsif ($type eq 'MUNGE') {
-					map { push(@{$obj->{'test action'}}, "MUNGE file:%OUTDIR%/$_ munge_standard"); } (@files);
+					map { push(@{$obj->{'test action'}}, "MUNGE file:" . catfile('%OUTDIR%', $_) . " munge_standard"); } (@files);
 				}
 				elsif ($type eq 'COMPARE_FILE') {
 					# if we're comparing stdout and stderr, manipulate the list to compare stderr first.  It turns
 					# out that seeing errors first is much more useful, but I don't want to modify all the existing tests
 					my @filesSorted = grep(/\.stderr/, @files);
 					push(@filesSorted, grep(/\.stdout/, @files), grep(!/\.(stdout|stderr)/, @files));
-					map { push(@{$obj->{'test result'}}, "COMPARE_FILE %REFDIR%/$_ %OUTDIR%/$_"); } (@filesSorted);
+					map { push(@{$obj->{'test result'}}, "COMPARE_FILE " . catfile('%OUTDIR%', $_) .' ' . catfile('%OUTDIR%', $_)); } (@filesSorted);
 				}
 				elsif ($type eq 'INTERACT') {
-					my $file     = '%OUTDIR%/%TESTID%.expect';
+					my $file     = catfile('%OUTDIR%', '%TESTID%.expect');
 					push(@{$obj->{'pre action'}}, "REMOVE_FILE $file");
 
 					my $cmd       = shift(@files);
@@ -599,6 +612,24 @@ sub debug {
 	if ($G::debug->{$type} || $G::debug->{'ALL'}) {
 		print STDERR "DEBUG $type $string\n";
 	}
+}
+
+# yuck.  Just yuck
+sub mshellwords {
+	my $line = shift;
+	my @return = ();
+	
+	if ($^O eq 'MSWin32') {
+		$line =~ s/\\/::BACKSLASH::/g;
+		foreach my $part (shellwords($line)) {
+			$part =~ s/::BACKSLASH::/\\/g;
+			push(@return, $part);
+		}
+	}
+	else {
+		@return = shellwords($line);
+	}
+	return @return;
 }
 
 sub munge_general {
