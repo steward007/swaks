@@ -18,6 +18,8 @@ use Term::ReadKey;
 use Text::ParseWords;
 use Text::Diff qw();
 
+$| = 1;
+
 # --headless - don't prompt the user, just run and display the results
 # --outfile - save the results in a way that can be read by infile
 # --infile - load state of a previous run.  Only really useful in conjunction with --errors
@@ -45,7 +47,7 @@ my $tokens = {
 if ($ENV{TEST_SWAKS}) {
 	$tokens->{'global'}{'%SWAKS%'} = $ENV{TEST_SWAKS};
 }
-#$tokens->{'global'}{'%SWAKS%'} = 'C:\Users\Administrator\git\swaks\swaks';
+#$tokens->{'global'}{'%SWAKS%'} = 'C:\Users\Administrator\git\swaks\swaks.pl';
 
 
 if (!-d $testDir) {
@@ -218,7 +220,7 @@ sub runResult {
 								last INTERACT;
 							}
 							elsif ($input eq 'd') {
-								my @cmds = ('cat');
+								my @cmds = ('intcat');
 								if (length($ENV{'PAGER'})) {
 									unshift(@cmds, $ENV{'PAGER'});
 								}
@@ -228,12 +230,21 @@ sub runResult {
 
 								CMD:
 								foreach my $cmd (@cmds) {
-									debug('exec', "$cmd $diffFile");
-									if (system($cmd, $diffFile) == -1) {
-										print "ERROR: unable to execute '$cmd $diffFile': $!\n";
-										next CMD;
+									if ($cmd eq 'intcat') {
+										open(I, $diffFile) || print "ERROR: unable to open $diffFile: $!\n";
+										while (<I>) {
+											print;
+										}
+										close(I);
 									}
-									last CMD;
+									else {
+										debug('exec', "$cmd $diffFile");
+										if (system($cmd, $diffFile) == -1) {
+											print "ERROR: unable to execute '$cmd $diffFile': $!\n";
+											next CMD;
+										}
+										last CMD;
+									}
 								}
 								next INTERACT;
 							}
