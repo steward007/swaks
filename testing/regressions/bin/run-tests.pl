@@ -13,6 +13,7 @@ use strict;
 use File::Copy qw();
 use File::Spec::Functions qw(:ALL);
 use Getopt::Long;
+use IPC::Open3;
 use Sys::Hostname;
 use Term::ReadKey;
 use Text::ParseWords;
@@ -554,42 +555,101 @@ sub captureOutput {
 
 	debug('exec', $debug);
 
-	FORK: {
-		if (my $pid = fork) {
-			# parent
 
-			#### wait here
-			wait();
-			return;
+# use IPC::Run;
+use Symbol 'gensym';
+
+my ($childStdin, $childStdout, $childStderr);
+$childStderr = gensym;
+my $childPid;
+
+eval {
+	$childPid = open3($childStdin, $childStdout, $childStderr, @$args);
+};
+die "open3 failed: $@\n" if ($@);
+
+my ($fileStdout, $fileStderr, $fileStdin);
+if ($inFile) {
+	open($fileStdin, "<$inFile") || die "Can't open new stdin file $inFile to read: $!\n";
+	while (my $line = <$fileStdin>) {
+		print $childStdin $line;
+	}
+	close($fileStdin);
+}
+open($fileStdout, ">$outFile") || die "Can't open new stdout file $outFile to write: $!\n";
+open($fileStderr, ">$errFile") || die "Can't open new stderr file $errFile to write: $!\n";
+foreach my $pair ({ in => $childStdout, out => $fileStdout }, { in => $childStderr, out => $fileStderr }) {
+	my $data  = '';
+	my $chunk = 1024;
+	READ:
+	while (1) {
+		my $len   = sysread($pair->{in}, $data, $chunk, length($data));
+
+		if (!defined($len)) {
+			die("failed to read input: $!\n");
 		}
-		elsif (defined $pid) { # $PID is zero here if defined
-			# child.  reopen STDOUT and STDERR into the files we want to capture into
-
-			open(NEWSTDOUT, ">$outFile") || die "Can't open new stdout file $outFile to write: $!\n";
-			open(NEWSTDERR, ">$errFile") || die "Can't open new stderr file $errFile to write: $!\n";
-			close(STDOUT);
-			open(STDOUT, ">&NEWSTDOUT") || die "Couldn't redirect STDOUT to new file: $!\n";
-			close(STDERR);
-			open(STDERR, ">&NEWSTDERR") || die "Couldn't redirect STDERR to new file: $!\n";
-
-			if ($inFile) {
-				open(NEWSTDIN, "<$inFile") || die "Can't open new stdin file $inFile to read: $!\n";
-				close(STDIN);
-				open(STDIN, "<&NEWSTDIN")     || die "Couldn't redirect STDIN to read from new file: $!\n";
-			}
-
-			exec(@$args);
-			exit;
+		elsif ($len == 0) {
+			last READ;
 		}
-		elsif ($! =~ /No more process/) {
-			# EAGAIN, in parent, supposedly recoverable fork error
-			sleep 5;
-			redo FORK;
-		}
-		else {
-			die "Can't fork: $!\n";
+		elsif ($len < $chunk) {
+			last READ;
 		}
 	}
+	print {$pair->{out}} $data;
+}
+close($fileStdout);
+close($fileStderr);
+close($childStdin);
+close($childStdout);
+close($childStderr);
+waitpid($childPid, 0);
+
+
+	# open(my $childStdout, ">$outFile") || die "Can't open new stdout file $outFile to write: $!\n";
+	# open(my $childStderr, ">$errFile") || die "Can't open new stderr file $errFile to write: $!\n";
+	# my $childStdin = undef();
+	# if ($inFile) {
+	# 	open($childStdin, "<$inFile") || die "Can't open new stdin file $inFile to read: $!\n";
+	# }
+	# my $child = open3($childStdin, $childStdout, $childStderr, @$args);
+	# waitpid($child, 0);
+
+	# FORK: {
+	# 	if (my $pid = fork) {
+	# 		# parent
+
+	# 		#### wait here
+	# 		wait();
+	# 		return;
+	# 	}
+	# 	elsif (defined $pid) { # $PID is zero here if defined
+	# 		# child.  reopen STDOUT and STDERR into the files we want to capture into
+
+	# 		open(NEWSTDOUT, ">$outFile") || die "Can't open new stdout file $outFile to write: $!\n";
+	# 		open(NEWSTDERR, ">$errFile") || die "Can't open new stderr file $errFile to write: $!\n";
+	# 		close(STDOUT);
+	# 		open(STDOUT, ">&NEWSTDOUT") || die "Couldn't redirect STDOUT to new file: $!\n";
+	# 		close(STDERR);
+	# 		open(STDERR, ">&NEWSTDERR") || die "Couldn't redirect STDERR to new file: $!\n";
+
+	# 		if ($inFile) {
+	# 			open(NEWSTDIN, "<$inFile") || die "Can't open new stdin file $inFile to read: $!\n";
+	# 			close(STDIN);
+	# 			open(STDIN, "<&NEWSTDIN")     || die "Couldn't redirect STDIN to read from new file: $!\n";
+	# 		}
+
+	# 		exec(@$args);
+	# 		exit;
+	# 	}
+	# 	elsif ($! =~ /No more process/) {
+	# 		# EAGAIN, in parent, supposedly recoverable fork error
+	# 		sleep 5;
+	# 		redo FORK;
+	# 	}
+	# 	else {
+	# 		die "Can't fork: $!\n";
+	# 	}
+	# }
 }
 
 sub get_hostname {
