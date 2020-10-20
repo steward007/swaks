@@ -416,7 +416,7 @@ sub runAction {
 					die "Couldn't run $munge: $@\n";
 				}
 			}
-			munge_general(\@lines, '.?', $tokens->{'%SWAKS%'}, '%SWAKS_COMMAND%');
+			munge_general(\@lines, '.?', quotemeta($tokens->{'%SWAKS%'}), '%SWAKS_COMMAND%');
 
 			open(O, ">$file") || die "Couldn't write to $file: $!\n";
 			print O join('', @lines);
@@ -764,9 +764,9 @@ sub munge_paths {
 	my $lines    = shift;
 	my $consider = shift || '.?';
 
-	munge_general($lines, $consider, $tokens->{'global'}{'%OUTDIR%'}, '/path/to/OUTDIR');
-	munge_general($lines, $consider, $tokens->{'global'}{'%REFDIR%'}, '/path/to/REFDIR');
-	munge_general($lines, $consider, $tokens->{'global'}{'%TESTDIR%'}, '/path/to/TESTDIR');
+	munge_general($lines, $consider, quotemeta($tokens->{'global'}{'%OUTDIR%'}), '/path/to/OUTDIR');
+	munge_general($lines, $consider, quotemeta($tokens->{'global'}{'%REFDIR%'}), '/path/to/REFDIR');
+	munge_general($lines, $consider, quotemeta($tokens->{'global'}{'%TESTDIR%'}), '/path/to/TESTDIR');
 }
 
 sub munge_local_hostname {
